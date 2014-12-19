@@ -1,39 +1,40 @@
 # Misc. functions to work on the 'Spilling the Beans' problem,
 # communicated by Zach, but originally from Project Euler
-# (Problem #334)
+# (Problem #334), see:
+#
+# https://projecteuler.net/problem=334
 #
 # Also using this as a pretext to do some Python, very early steps!
 
-from array import *
-
-
-def display(l):
-    """ 
-    Displays a bean configuration list (expanded), with no spaces
-    (will not work well with 2+ digit numbers of beans)
+def iterateSingle(l):
+    """
+    Does a *single* spill (2 beans going to the 2 neighbors), picking
+    the leftmost spillable bin
 
     Keyword argument:
-    l -- the list containing the bean configuration
+    l -- the expanded bean configuration
     """
-    res = ""
-    for x in l:
-        res = "%s%d" % (res, x)
+    res = l
+    for i in range(0, len(l)):
+        if res[i] > 1:
+            res[i  ] -= 2
+            res[i-1] += 1
+            res[i+1] += 1
+            return res
     return res
 
 
-def merge(l1, l2):
-    """ 
-    Merges 2 (aligned) expanded bean configuration lists
+def iterateCount(l, n):
+    """
+    Applies iterateSingle a specified number of times
 
     Keyword arguments:
-    l1 -- first bean configuration list
-    l2 -- second bean configuration list
+    l -- the expanded bean configuration
+    n -- the number of iterations to do
     """
-    n = len(l1)
-    res = []
     for i in range(0, n):
-        res.append(l1[i]+l2[i])
-    return res
+        l = iterateSingle(l)
+    return l
 
 
 def iterate(l):
@@ -66,7 +67,6 @@ def iterate(l):
     res.append(pp)
     if p > 0:
         res.append(p)
-    #print display(res)
     return (res, n)
 
 
@@ -104,12 +104,13 @@ def iterateAll(l):
     return (l, r)
 
 
-def beansFromList(l):
-    r = array('i', l)
-    return r
-
-
 def decompress(l):
+    """
+    Given a bean configuration encoded in the form:
+    [(n_0, v_0), (n_1, v_1),... ]
+    expands it as:
+    [ v_0 (n_0 times), v_1 (n_1 times),... ]
+    """
     res = []
     for (a, b) in l:
         for i in range(0, a):
@@ -118,6 +119,9 @@ def decompress(l):
 
 
 def compress(l):
+    """
+    Inverse operation of decompress
+    """
     res = []
     prev = 0
     count = 0
@@ -133,37 +137,116 @@ def compress(l):
 
 
 def f2t(a, b):
+    """
+    Utility function to investigate how configurations of
+    the form
+    1^a 2^b 1^a
+    expand
+    """
     x = decompress([(a, 1), (b, 2), (a, 1)])
     (l, n) = iterateAll(x)
     return n
 
 
 def f3t(a, b, c):
+    """
+    Utility function to investigate how configurations of
+    the form
+    1^a 2^b 1^c
+    expand
+    """
     x = decompress([(a, 1), (b, 2), (c, 1)])
     (l, n) = iterateAll(x)
     return n
 
 
-def f4t(a, b):
-    return f3t(a, 1, b)
+def T(a, b):
+    """
+    Expands a number encoded in triangular form
+
+    Keyword arguments:
+    a -- the index of the triangular number
+    b -- the remainder (b <= a)
+    """
+    return a*(a+1)/2+b
+
+def s(a, b):
+    """
+    The cost function to expand T(a, b)
+    under the form
+    e_0, e_1, ..., e_a, T(a-1, b)
+    where e_i = 1 for i != b and e_b = 0
+    """
+    return a*(a*a-1)/6 + a*b - b*(b-1)/2
 
 
-def f4(a, b):
-    x = decompress([(a, 1), (1, 2), (b, 1)])
-    (l, n) = iterateAll(x)
-    print display(l)
-    return n
+def Tinv(x, lower = 0):
+    """
+    Finds a and b (b <= a) such that
+    x = T(a, b)
+
+    Keyword values:
+    x -- the number to invert
+    lower -- to optimize, a lower bound for a
+    """
+    a = lower
+    t = lower * ( lower + 1 ) / 2
+    if x < lower:
+        a = 0
+        t = 0
+    while x - t > a:
+        a += 1
+        t += a
+    return (a, x - t)
 
 
-def mergeBy1(config, position, count):
-    n = len(config)
-    a = decompress([(position-1,0),(1,1),(n-position,0)])
-    l = config
-    res = []
-    for i in range(0, count):
-        la = merge(a, l)
-        (l_aux, n_aux) = iterateAll(la)
-        c_aux = compress(l_aux)
-        res.append((n_aux, c_aux, l_aux))
-        l = l_aux
-    return res
+def genConfig(n = 1500):
+    """
+    Generates the initial config corresponding to the actual
+    ProjectEuler #334 problem (which uses n = 1500)
+    """
+    r = []
+    t = 123456
+    for i in range(0, n):
+        isOdd = t % 2 == 1
+        t = t / 2
+        if isOdd:
+            t = t ^ 926252
+        r.append((t % 2048) + 1)
+    return r
+
+
+def solve(n = 1500):
+    """
+    Finds the solution
+    """
+    config = genConfig(n)
+    prevA = 0
+    prevB = 0
+    r     = 0
+    p     = 0
+    steps = 0
+    while r >= 1 or p < n:
+        # At this point, the configuration is of the form:
+        # e_0, e_1, ...., e_prevA, r
+        # where:
+        # * r is at position p on the grid
+        # * e_i = 1 for i != b, and e_b = 0
+        # * the elements of config of index >= p are added on top
+        #   of the above
+        if p % 10000 == 0:
+            print "p: %d, r: %d, steps: %d" % (p, r, steps)
+        if p < n:
+            r += config[p]
+        q = T(prevA, prevB) + r
+        (a, b) = Tinv(q, lower = prevA)
+        incSteps = s(a, b) - s(prevA, prevB)
+        rDec = a - prevA + 1
+        prevA = a + 1
+        prevB = b
+        steps += incSteps
+        r -= rDec
+        p += 1
+    return steps
+
+
