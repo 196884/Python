@@ -1,9 +1,8 @@
 def solve():
     # Using the pentagonal number theorem
-    m = 10 ** 6
+    b = 100
     p = [ 1, 1 ]
-    n = 2
-    while True:
+    for n in range(2, b+1):
         acc = 0
         k = 1
         sk = 1
@@ -16,13 +15,10 @@ def solve():
                 acc += sk * p[np]
             if nm >= 0:
                 acc += sk * p[nm]
-            acc = acc % m
             k   += 1
             sk  *= -1
-        if acc == 0:
-            return n
         p.append(acc)
-        n += 1
+    return p[-1] - 1
 
 if __name__ == "__main__":
     result = solve()
