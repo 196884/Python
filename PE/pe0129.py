@@ -22,6 +22,9 @@ def orderAux(m, k, d, p, pk, dk, pInfo):
 
 def solve():
     # Naive, slow-ish, but good enough
+    # It's actually overkill at this point to precompute phi,
+    # since the solution is likely to be just above 10**6, so starting
+    # there and computing phi 'naively' should be good enough
     B = 40000000
     # pInfo[n] = (p, p^k) where:
     pInfo = [(1, 1) for i in range(0, B+1)]
