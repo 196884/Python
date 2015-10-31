@@ -1,6 +1,11 @@
+import ConfigParser
 from twisted.internet import reactor
-from twisted.python import log
+from twisted.application.service import Application
+from twisted.python.log import ILogObserver, FileLogObserver
+from twisted.python import log, util
+from twisted.python.logfile import DailyLogFile
 from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientProtocol, connectWS
+import sys
 import json
 import decimal
 from decimal import Decimal
@@ -9,18 +14,20 @@ from order import Quote, BookSide
 
 decimal.getcontext().prec = 10
 
-loggingFile = "/Users/regisdupont/Documents/Code/Python/Coinbase/log.txt"
+config = None
 
 class ClientProtocol(WebSocketClientProtocol):
     def __init__(self):
         self.lastSequenceNumber = -1
         self.is_closed = False
         self.bookSides = dict()
-        self.bookSides[ MarketSide.BID ] = BookSide(MarketSide.BID, 0.01, 280, 380)
-        self.bookSides[ MarketSide.ASK ] = BookSide(MarketSide.ASK, 0.01, 280, 380)
+        priceLB  = Decimal(config.get("coinbase", "priceLowerBound"))
+        priceUB  = Decimal(config.get("coinbase", "priceUpperBound"))
+        priceRes = Decimal(config.get("coinbase", "priceResolution"))
+        self.bookSides[ MarketSide.BID ] = BookSide(MarketSide.BID, priceRes, priceLB, priceUB)
+        self.bookSides[ MarketSide.ASK ] = BookSide(MarketSide.ASK, priceRes, priceLB, priceUB)
         self.tob       = (None, None)
         self.orders    = dict()
-        log.startLogging(open(loggingFile, 'w'))
 
     def onConnect(self, response):
         print("Server connected: {0}".format(response.peer))
@@ -120,8 +127,35 @@ class ClientProtocol(WebSocketClientProtocol):
     def onClose(self, wasClean, code, reason):
         print("WebSocket connection closed: {0}".format(reason))
 
+def myFloEmit(self, eventDict):
+    text = log.textFromEventDict(eventDict)
+    if text is None:
+        return
+    self.timeFormat = "%Y%m%d-%H:%M:%S.%f %z"
+    timeStr = self.formatTime(eventDict["time"])
+    util.untilConcludes(self.write, timeStr + " " + text + "\n")
+    util.untilConcludes(self.flush)
+
 if __name__ == '__main__':
-    factory = WebSocketClientFactory("wss://ws-feed.exchange.coinbase.com")
-    factory.protocol = ClientProtocol
-    connectWS(factory)
-    reactor.run()
+    if 2 != len(sys.argv):
+        print "Expected unique argument (configuration file)"
+    else:
+        configFile = sys.argv[1]
+        print "Using configuration file '{0}'".format(configFile)
+        config = ConfigParser.RawConfigParser()
+        config.read(configFile)
+        loggingFile = config.get("coinbase", "logfile")
+        #loggingDir  = config.get("coinbase", "logdir")
+
+        #application = Application("CoinbaseFeed")
+        #application.setComponent(ILogObserver, flo.emit)
+        log.FileLogObserver.emit = myFloEmit
+        log.startLogging(open(loggingFile, "w"))
+
+        log.msg("coinbase - configuration file '{0}'".format(configFile))
+        wsAddress = config.get("coinbase", "websocket")
+        print "Connecting to websocket '{0}'".format(wsAddress)
+        factory = WebSocketClientFactory(wsAddress)
+        factory.protocol = ClientProtocol
+        connectWS(factory)
+        reactor.run()
