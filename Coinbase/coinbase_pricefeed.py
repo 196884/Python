@@ -1,4 +1,5 @@
 from twisted.internet import reactor
+from twisted.python import log
 from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientProtocol, connectWS
 import json
 import decimal
@@ -7,6 +8,8 @@ from enums import MarketSide, OrderSide
 from order import Quote, BookSide
 
 decimal.getcontext().prec = 10
+
+loggingFile = "/Users/regisdupont/Documents/Code/Python/Coinbase/log.txt"
 
 class ClientProtocol(WebSocketClientProtocol):
     def __init__(self):
@@ -17,6 +20,7 @@ class ClientProtocol(WebSocketClientProtocol):
         self.bookSides[ MarketSide.ASK ] = BookSide(MarketSide.ASK, 0.01, 280, 380)
         self.tob       = (None, None)
         self.orders    = dict()
+        log.startLogging(open(loggingFile, 'w'))
 
     def onConnect(self, response):
         print("Server connected: {0}".format(response.peer))
@@ -63,7 +67,9 @@ class ClientProtocol(WebSocketClientProtocol):
         newTob = (self.bookSides[MarketSide.BID].tobPrice(), self.bookSides[MarketSide.ASK].tobPrice())
         if newTob != self.tob:
             self.tob = newTob
-            print "TOB[{0} - {1}]".format(self.tob[0], self.tob[1])
+            tobStr = "TOB[{0} - {1}]".format(self.tob[0], self.tob[1])
+            print tobStr
+            log.msg(tobStr)
 
     def msgSide(self, msg):
         if "buy" == msg[ "side" ]:
