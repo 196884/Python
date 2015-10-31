@@ -1,11 +1,16 @@
 from enums import MarketSide
+import decimal
 from decimal import Decimal
 
+decimal.getcontext().prec = 10
+decplaces = Decimal(10) ** -decimal.getcontext().prec
+
 class Quote:
-    def __init__(self, side, price, qty, rawData):
+    def __init__(self, side, price, qty, quoteId, rawData = None):
         self.side     = side
         self.price    = price
         self.quantity = qty
+        self.quoteId  = quoteId
         self.rawData  = rawData
 
     def __str__( self ):
@@ -15,7 +20,7 @@ class PriceLevel:
     def __init__(self, side, price, index):
         self.side       = side
         self.price      = price
-        self.index      = index # the index in the book...
+        self.index      = index # the index in the book
         self.quantity   = 0
         self.quotesById = dict()
 
@@ -23,14 +28,14 @@ class PriceLevel:
         return "PriceLevel[{0}:{1}x{2}]".format( self.side, self.quantity, self.price )
 
     def empty(self):
-        return len(self.quotesById) > 0
+        return len(self.quotesById) == 0
 
     class WrongPrice(Exception): pass
 
     def addNewQuote(self, quote):
         if self.price != quote.price:
             raise WrongPrice()
-        self.quotesById[ quote.rawData[ "order_id" ] ] = quote
+        self.quotesById[ quote.quoteId ] = quote
         self.quantity += quote.quantity
 
     def removeQuote(self, quoteId):
@@ -38,8 +43,6 @@ class PriceLevel:
         if None == oldQuote:
             return
         self.quantity -= oldQuote.quantity
-        print "Removed {0}:".format(quoteId)
-        print self.quotesById
 
 class BookSide:
     def __init__(self, side, priceResolution, priceLowerBound, priceUpperBound):
@@ -57,7 +60,7 @@ class BookSide:
         self.tobIdx   = -1
 
     def indexToPrice(self, index):
-        return self.priceLB + index * self.priceRes
+        return Decimal(self.priceLB + index * self.priceRes)
 
     class UnexpectedPrice(Exception):
         def __init__(self, price): self.price = price
@@ -68,7 +71,6 @@ class BookSide:
         if price < self.priceLB or price > self.priceUB:
             return None # TODO: add support for out of range prices
         idx = int(( price - self.priceLB + Decimal(0.5) * self.priceRes ) // self.priceRes)
-        print idx
         if self.indexToPrice(idx) != price:
             print price
             print self.indexToPrice(idx)
@@ -88,7 +90,7 @@ class BookSide:
             return # TODO: add support
         priceLevel = self.priceLevel(quote.price)
         priceLevel.addNewQuote(quote)
-        self.idToIdx[ quote.rawData[ "order_id" ] ] = priceLevel.index
+        self.idToIdx[ quote.quoteId ] = priceLevel.index
         if self.tobIdx < 0:
             self.tobIdx = priceLevel.index
         else:
@@ -124,3 +126,10 @@ class BookSide:
         if self.tobIdx < 0:
             return None
         return self.levels[self.tobIdx].price
+
+    def printTob(self):
+        if self.tobIdx < 0:
+            print "None"
+        else:
+            level = self.levels[self.tobIdx]
+            print "{0}x{1}".format(level.price, level.quantity)

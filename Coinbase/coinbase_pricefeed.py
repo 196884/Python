@@ -15,6 +15,8 @@ class ClientProtocol(WebSocketClientProtocol):
         self.bookSides = dict()
         self.bookSides[ MarketSide.BID ] = BookSide(MarketSide.BID, 0.01, 280, 380)
         self.bookSides[ MarketSide.ASK ] = BookSide(MarketSide.ASK, 0.01, 280, 380)
+        self.tob       = (None, None)
+        self.orders    = dict()
 
     def onConnect(self, response):
         print("Server connected: {0}".format(response.peer))
@@ -30,8 +32,6 @@ class ClientProtocol(WebSocketClientProtocol):
         self.initMessage()
 
     def onMessage(self, msg, binary):
-        print "********************************"
-        print "Got echo: " + msg
         msgData = json.loads(msg)
         seqNum  = msgData[ "sequence" ]
         if -1 == self.lastSequenceNumber or seqNum == self.lastSequenceNumber + 1:
@@ -53,61 +53,45 @@ class ClientProtocol(WebSocketClientProtocol):
             self.onReceivedMessage(msgData)
         else:
             self.onUnexpectedMessage(msgData)
-        return 
-        msg_side = msgData[ "side" ]
-        if "buy" == msg_side:
-            side = OrderSide.BUY
-        elif "sell" == msg_side:
-            side = OrderSide.SELL
-        else:
-            side = None # FIXME: throw!
-        msg_type = msgData[ "type" ]
-        if msg_type == "done":
-            msg_reason = msgData[ "reason" ]
-            if msg_reason != "canceled":
-                print "###############################################"
-                print self.lastSequenceNumber 
-                print "###############################################"
-                self.abort( "saw what we were looking for" )
-        if "received" == msg_type:
-            quote = Quote( side, msgData[ "price" ], msgData[ "size" ] )
-            print quote
 
     class UnexpectedMessage(Exception):
         def __init__(self, msg): self.msg = msg
 
         def __str__(self): return "ClientProtocol::UnexpectedMessage[{0}]".format(self.msg)
 
-    def printTobPrices(self):
-        print "TobPrices: {0} - {1}".format(self.bookSides[MarketSide.BID].tobPrice(), self.bookSides[MarketSide.ASK].tobPrice())
+    def updateTob(self):
+        newTob = (self.bookSides[MarketSide.BID].tobPrice(), self.bookSides[MarketSide.ASK].tobPrice())
+        if newTob != self.tob:
+            self.tob = newTob
+            print "TOB[{0} - {1}]".format(self.tob[0], self.tob[1])
 
-    def onOpenMessage(self, msg):
+    def msgSide(self, msg):
         if "buy" == msg[ "side" ]:
-            side = MarketSide.BID
+            return MarketSide.BID
         elif "sell" == msg[ "side" ]:
-            side = MarketSide.ASK
+            return MarketSide.ASK
         else:
             raise UnexpectedMessage(msg)
+
+    def onOpenMessage(self, msg):
+        side = self.msgSide(msg)
         size = msg.get( "size", msg.get( "remaining_size", None ) )
         if None == size:
             raise UnexpectedMessage(msg)
         size = Decimal(size)
-        quote = Quote(side, Decimal(msg["price"]), size, msg)
+        quote = Quote(side, Decimal(msg["price"]), size, msg["order_id"], msg)
         self.bookSides[side].addNewQuote(quote)
-        print quote
-        self.printTobPrices()
+        self.updateTob()
 
     def onDoneMessage(self, msg):
-        if "buy" == msg[ "side" ]:
-            side = MarketSide.BID
-        elif "sell" == msg[ "side" ]:
-            side = MarketSide.ASK
-        else:
-            raise self.UnexpectedMessage(msg)
+        side = self.msgSide(msg)
         self.bookSides[side].removeQuote(msg["order_id"])
-        self.printTobPrices()
+        self.orders.pop(msg["order_id"], None)
+        self.updateTob()
 
     def onMatchMessage(self, msg):
+        print "MATCH[{0}]: {1}".format(self.msgSide(msg), msg)
+        print "TAKER: {0}".format(self.orders.get(msg["taker_order_id"], None))
         return 
 
     def onChangeMessage(self, msg):
@@ -117,6 +101,7 @@ class ClientProtocol(WebSocketClientProtocol):
         raise UnexpectedMessage(msg)
 
     def onReceivedMessage(self, msg):
+        self.orders[msg["order_id"]] = msg
         return
 
     def onUnexpectedMessage(self, msg):
