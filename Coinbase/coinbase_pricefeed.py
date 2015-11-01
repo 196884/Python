@@ -10,7 +10,7 @@ import json
 import decimal
 from decimal import Decimal
 from enums import MarketSide, OrderSide
-from order import Quote, BookSide
+from order import Quote, BookSide, Tob
 
 decimal.getcontext().prec = 10
 
@@ -20,13 +20,15 @@ class ClientProtocol(WebSocketClientProtocol):
     def __init__(self):
         self.lastSequenceNumber = -1
         self.is_closed = False
-        self.bookSides = dict()
         priceLB  = Decimal(config.get("coinbase", "priceLowerBound"))
         priceUB  = Decimal(config.get("coinbase", "priceUpperBound"))
         priceRes = Decimal(config.get("coinbase", "priceResolution"))
+        self.bookSides = dict()
         self.bookSides[ MarketSide.BID ] = BookSide(MarketSide.BID, priceRes, priceLB, priceUB)
         self.bookSides[ MarketSide.ASK ] = BookSide(MarketSide.ASK, priceRes, priceLB, priceUB)
-        self.tob       = (None, None)
+        self.tob       = dict()
+        self.tob[ MarketSide.BID ] = None
+        self.tob[ MarketSide.ASK ] = None
         self.orders    = dict()
 
     def onConnect(self, response):
@@ -93,19 +95,28 @@ class ClientProtocol(WebSocketClientProtocol):
             raise UnexpectedMessage(msg)
         size = Decimal(size)
         quote = Quote(side, Decimal(msg["price"]), size, msg["order_id"], msg)
-        self.bookSides[side].addNewQuote(quote)
-        self.updateTob()
+        bs = self.bookSides[side]
+        bs.addNewQuote(quote)
+        newTob = bs.tob()
+        if newTob is None or self.tob[side] is None or newTob != self.tob[side]:
+            self.tob[side] = newTob
+            log.msg("TOB_UPDATE[{0} - {1} - {2}]".format(msg["time"], side, newTob))
 
     def onDoneMessage(self, msg):
         side = self.msgSide(msg)
-        self.bookSides[side].removeQuote(msg["order_id"])
+        bs = self.bookSides[side]
+        bs.removeQuote(msg["order_id"])
         self.orders.pop(msg["order_id"], None)
-        self.updateTob()
+        newTob = bs.tob()
+        if newTob is None or self.tob[side] is None or newTob != self.tob[side]:
+            self.tob[side] = newTob
+            log.msg("TOB_UPDATE[{0} - {1} - {2}]".format(msg["time"], side, newTob))
 
     def onMatchMessage(self, msg):
-        print "MATCH[{0}]: {1}".format(self.msgSide(msg), msg)
-        print "TAKER: {0}".format(self.orders.get(msg["taker_order_id"], None))
-        return 
+        side = self.msgSide(msg)
+        #print "MATCH[{0}]: {1}".format(side, msg)
+        #print "TAKER: {0}".format(self.orders.get(msg["taker_order_id"], None))
+        log.msg("TRD_UPDATE[{0} - {1} - {2}x{3}]".format(msg["time"], side, msg["size"], msg["price"]))
 
     def onChangeMessage(self, msg):
         return 

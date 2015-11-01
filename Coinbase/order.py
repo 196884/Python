@@ -16,6 +16,20 @@ class Quote:
     def __str__( self ):
         return "[{0}:{1}x{2}]".format( self.side, self.quantity, self.price )
 
+class Tob:
+    def __init__(self, price, size):
+        self.price = price
+        self.size  = size
+
+    def __eq__(self, other):
+        return self.price == other.price and self.size == other.size
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __str__(self):
+        return "{0}x{1}".format(self.size, self.price)
+
 class PriceLevel:
     def __init__(self, side, price, index):
         self.side       = side
@@ -122,14 +136,8 @@ class BookSide:
             self.levels[idx] = None
             self.updateTobIndex()
 
-    def tobPrice(self):
+    def tob(self):
         if self.tobIdx < 0:
             return None
-        return self.levels[self.tobIdx].price
-
-    def printTob(self):
-        if self.tobIdx < 0:
-            print "None"
-        else:
-            level = self.levels[self.tobIdx]
-            print "{0}x{1}".format(level.price, level.quantity)
+        tobLevel = self.levels[self.tobIdx]
+        return Tob(tobLevel.price, tobLevel.quantity)
