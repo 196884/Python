@@ -5,12 +5,12 @@ import decimal
 from decimal import Decimal
 from twisted.python.log import ILogObserver, FileLogObserver
 from twisted.python import log, util
-from twisted.internet import reactor
+from twisted.internet import protocol, reactor
 from twisted.internet.defer import Deferred
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
 from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientProtocol, connectWS
-from enums import ClientState
+from enums import ClientState, ServiceCommand
 
 def onBookL1Data(data):
     print "onBookL1Data"
@@ -52,7 +52,7 @@ class CoinbaseWebSocketClient(WebSocketClientProtocol):
             cbc.getBookInitialSnapshot()
 
     def log(self, msg):
-        log.msg('{0} - {1}'.format(type(self).__name__, msg))
+        log.msg('CoinbaseWebSocketClient - {0}'.format(msg))
 
 class CoinbaseRestClient:
     def __init__(self, appName, apiUri):
@@ -115,10 +115,29 @@ def myFloEmit(self, eventDict):
     util.untilConcludes(self.write, timeStr + " " + text + "\n")
     util.untilConcludes(self.flush)
 
+class CoinbaseClientService(protocol.Protocol):
+    def __init__(self, factory):
+        self.factory = factory
+
+    def dataReceived(self, data):
+        log.msg('CoinbaseClientService - dataReceived[{0}]'.format(data))
+        cmdData = json.loads(data)
+        self.factory.coinbaseClient.onCommand(cmdData)
+
+class CoinbaseClientServiceFactory(protocol.Factory):
+    def __init__(self, coinbaseClient):
+        self.coinbaseClient = coinbaseClient
+
+    def buildProtocol(self, addr):
+        return CoinbaseClientService(self)
+
 class CoinbaseClient:
     def __init__(self, config):
         prec = config.getint('coinbase', 'decimalPrec')
-        self.log("setting decimal precision to {0}".format(prec))
+        self.svcPort     = config.getint('coinbase', 'servicePort')
+        self.log('setting service port to {0}'.format(self.svcPort))
+        reactor.listenTCP(self.svcPort, CoinbaseClientServiceFactory(self))
+        self.log('setting decimal precision to {0}'.format(prec))
         self.clientState = ClientState.INITIALIZING
         decimal.getcontext().prec = prec
         self.restClient  = CoinbaseRestClient(config.get('coinbase', 'clientName'), config.get('coinbase', 'restApiUri'))
@@ -133,11 +152,14 @@ class CoinbaseClient:
         reactor.callWhenRunning(self.whenRunning)
 
     def log(self, msg):
-        log.msg('{0} - {1}'.format(type(self).__name__, msg))
+        log.msg('CoinbaseClient - {0}'.format(msg))
 
     def fatal(self, msg):
-        log.msg('{0} - FATAL - {1}'.format(type(self).__name__, msg))
-        log.msg('{0} - ABORTING'.format(type(self).__name__))
+        log.msg('CoinbaseClient - FATAL - {0}'.format(msg))
+        self.exit()
+
+    def exit(self):
+        log.msg('CoinbaseClient - EXITING')
         self.clientState = ClientState.EXITING
         self.stop()
 
@@ -219,6 +241,14 @@ class CoinbaseClient:
 
     def onRestClientError(self, x):
         self.fatal('onRestClientError[{0}]'.format(x))
+
+    def onCommand(self, cmdData):
+        command = cmdData.get('command', None)
+        self.log('received command {0}'.format(command))
+        if ServiceCommand.EXIT == command:
+            self.exit()
+        else:
+            self.log('unhandled command')
 
     def run(self):
         reactor.run()

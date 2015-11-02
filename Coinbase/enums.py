@@ -13,5 +13,8 @@ ClientState = defEnum(
     'RUNNING',
     'EXITING'
 )
+ServiceCommand = defEnum(
+    'EXIT'
+)
 
 
