@@ -4,17 +4,4 @@ def defEnum( *args ):
     res = dict( zip( tags, vals ) )
     return type( "Enum", (), res )
 
-MarketSide  = defEnum( 'BID', 'ASK' )
-OrderSide   = defEnum( 'BUY', 'SELL' )
-ClientState = defEnum( 
-    'INITIALIZING', 
-    'WAITING_FOR_BOOK_SNAPSHOT',
-    'INITIALIZING_BOOK',
-    'RUNNING',
-    'EXITING'
-)
-ServiceCommand = defEnum(
-    'EXIT'
-)
-
 

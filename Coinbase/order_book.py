@@ -1,6 +1,8 @@
 import decimal
 from decimal import Decimal
-from enums import MarketSide
+from enums import defEnum
+
+MarketSide  = defEnum( 'BID', 'ASK' )
 
 class UnexpectedQuote(Exception):
     def __init__(self, quote):
@@ -31,7 +33,7 @@ class Quote:
         return 'Quote[{0}: {1} x {2} - {3}]'.format(self.side, self.price, self.size, self.orderId)
 
 
-class BookLevel:
+class BookPriceLevel:
     """
     Representing a single price level.
     """
@@ -123,7 +125,7 @@ class OrderBookSide:
             return None
         result = self.levels[index]
         if result is None and create:
-            result = BookLevel(price, index)
+            result = BookPriceLevel(price, index)
             self.levels[index] = result
         return result
 
@@ -200,6 +202,13 @@ class OrderBookSide:
         self.clear()
         for quote in snapshot:
             self.addQuote(quote)
+
+class OrderBookBuilder:
+    def __init__(self, priceInc, basePrice, maxMove):
+        self.orderBookSides = {
+            MarketSide.BID: OrderBookSide(MarketSide.BID, priceInc, basePrice - maxMove, basePrice + maxMove),
+            MarketSide.ASK: OrderBookSide(MarketSide.ASK, priceInc, basePrice - maxMove, basePrice + maxMove),
+        }
 
 def test1():
     bidBook = OrderBookSide(MarketSide.BID, Decimal("0.01"), Decimal("99"), Decimal("101"))

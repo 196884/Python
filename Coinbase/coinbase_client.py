@@ -10,18 +10,158 @@ from twisted.internet.defer import Deferred
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
 from autobahn.twisted.websocket import WebSocketClientFactory, WebSocketClientProtocol, connectWS
-from enums import ClientState, ServiceCommand
+from enums import defEnum
+from order_book import OrderBookSide, BookPriceLevel, Quote
 
-def onBookL1Data(data):
-    print "onBookL1Data"
-    print data
-    print 'Response version: {0}'.format(data.version)
-    print 'Response code:    {0}'.format(data.code)
-    print 'Response phrase:  {0}'.format(data.phrase)
-    print 'Response headers: {0}'.format(pformat(list(data.headers.getAllRawHeaders())))
-    body = readBody(data)
-    body.addCallback(cbBody)
-    return body
+ClientState = defEnum( 
+    'INITIALIZING', 
+    'WAITING_FOR_BOOK_SNAPSHOT',
+    'INITIALIZING_BOOK',
+    'RUNNING',
+    'EXITING'
+)
+
+ServiceCommand = defEnum(
+    'EXIT'
+)
+
+FeedHandlerState = defEnum('INACTIVE', 'BUFFERING', 'PROCESSING', 'DATALOSS')
+
+class IMarketDataFeedHandlerCB:
+    def onFeedDataloss(self):
+        pass
+
+    def onFeedError(self, error):
+        pass
+
+    def onFeedMsgOpen(self, quote):
+        pass
+
+    def onFeedMsgDone(self, quote):
+        pass
+
+    def onFeedMsgMatch(self, match):
+        pass
+
+    def onFeedMsgChange(self, change):
+        pass
+
+class CoinbaseMarketDataFeedHandler:
+    """
+    Mostly in charge of buffering messages pre-initial snapshot,
+    then checking the sequence numbers, doing data decoding (object creation)
+    and calling the right callbacks
+
+    cb must implement IMarketDataFeedHandlerCB
+    """
+    def __init__(self, cb):
+        self.cb               = cb
+        self.state            = FeedHandlerState.INACTIVE
+        self.bufferedMessages = []
+        self.expSeqNum        = None
+
+    def __str__(self):
+        return 'CoinbaseMarketDataHandler[{0}, bufferedMessages: {1}, expSeqNum: {2}]'.format(self.state, len(self.bufferedMessages), self.expSeqNum)
+
+    def startBuffering(self):
+        self.state = FeedHandlerState.BUFFERING
+
+    def inactivate(self):
+        self.state = FeedHandlerState.INACTIVE
+
+    def onDataloss(self, sequence):
+        self.state = FeedHandlerState.DATALOSS
+        self.cb.onFeedDataloss()
+
+    def onError(self, details):
+        msg.log('CoinbaseMarketDataFeedHandler - ERROR: {0}'.format(details))
+        self.cb.onFeedError(details)
+
+    def onReceived(self, msg):
+        pass
+
+    def onOpen(self, msg):
+        qtSide = msg['side']
+        if 'buy' == qtSide:
+            side = MarketSide.BID
+        elif 'sell' == qtSide:
+            side = MarketSide.ASK
+        else:
+            self.onError('unexpected side ({0})'.format(msg))
+            return None
+        quote = Quote(side, Decimal(msg['price']), Decimal(msg['size']), msg['order_id'], msg)
+        self.cb.onFeedMsgOpen(quote)
+
+    def onDone(self, msg):
+        qtSide = msg['side']
+        if 'buy' == qtSide:
+            side = MarketSide.BID
+        elif 'sell' == qtSide:
+            side = MarketSide.ASK
+        else:
+            self.onError('unexpected side ({0})'.format(msg))
+            return None
+        quote = Quote(side, Decimal(msg['price']), Decimal(msg['remaining_size']), msg['order_id'], msg)
+        self.cb.onFeedMsgDone(quote)
+
+    def onMatch(self, msg):
+        # FIXME: format correctly (add 'trade' type)
+        self.cb.onFeedMsgMatch(msg)
+
+    def onChange(self, msg):
+        # FIXME: format correctly
+        self.cb.onFeedMsgChange(msg)
+
+    def processMessage(self, msg):
+        """
+        Assumes we're not buffering, and the message sequence number has been checked
+        """
+        msgType = msg['type']
+        if   msgType == 'open':
+            self.onOpen(msg)
+        elif msgType == 'done':
+            self.onDone(msg)
+        elif msgType == 'match':
+            self.onMatch(msg)
+        elif msgType == 'received':
+            # FIXME: consider using this as primary trigger (would mean moving to top of if chain)
+            self.onReceived(msg)
+        elif msgType == 'change':
+            self.onChange(msg)
+        elif msgType == 'error':
+            self.onError(msg)
+        else:
+            self.onError(None)
+
+    def startProcessing(self, fromSeqNum):
+        """
+        Starts processing all messages with sequence number > seqNum,
+        and sets the state to 'PROCESSING'
+        """
+        self.expSeqNum = fromSeqNum + 1
+        self.state     = FeedHandlerState.PROCESSING
+        for msg in self.bufferedMessages:
+            seqNum = msg['sequence']
+            if seqNum > fromSeqNum:
+                if seqNum != self.expSeqNum:
+                    self.onDataloss()
+                    return None
+                else:
+                    self.expSeqNum += 1
+                    self.processMessage(msg)
+        self.bufferedMessages = []
+        # FIXME: we can add a hook into cb here, if needed...
+
+    def onMessage(self, msg):
+        if FeedHandlerState.PROCESSING == self.state:
+            seqNum = msg['sequence']
+            if seqNum == self.expSeqNum:
+                self.expSeqNum += 1
+                self.processMessage(msg)
+            else:
+                self.onDataloss()
+        elif FeedHandlerState.BUFFERING == self.state:
+            self.bufferedMessages.append(msg)
 
 class CoinbaseWebSocketClient(WebSocketClientProtocol):
     def onConnect(self, response):
@@ -36,15 +176,15 @@ class CoinbaseWebSocketClient(WebSocketClientProtocol):
 
     def onMessage(self, msg, binary):
         self.log('onMessage - message[{0}]'.format(msg))
-        msgDir = json.loads(msg)
+        msgDic = json.loads(msg)
         cbc    = self.factory.coinbaseClient
         if ClientState.RUNNING == cbc.clientState:
             self.log('onMessage - RUNNING - processing[{0}]'.format(msg))
         elif ClientState.WAITING_FOR_BOOK_SNAPSHOT == cbc.clientState:
             self.log('onMessage - WAITING_FOR_BOOK_SNAPSHOT - enqueuing[{0}]'.format(msg))
-            cbc.wsBuffer.append(msgDir)
+            cbc.wsBuffer.append(msgDic)
         elif ClientState.INITIALIZING_BOOK == cbc.clientState:
-            cbc.wsBuffer.append(msgDir)
+            cbc.wsBuffer.append(msgDic)
             self.log('onMessage - INITIALIZING_BOOK - will process {0} buffered messages'.format(len(cbc.wsBuffer)))
             cbc.clientState = ClientState.RUNNING
             self.log('onMessage - switched to RUNNING state')
@@ -109,7 +249,7 @@ def onError(x):
 def myFloEmit(self, eventDict):
     text = log.textFromEventDict(eventDict)
     if text is None:
-        return
+        return None
     self.timeFormat = "%Y%m%d-%H:%M:%S.%f %z"
     timeStr = self.formatTime(eventDict["time"])
     util.untilConcludes(self.write, timeStr + " " + text + "\n")
@@ -190,7 +330,7 @@ class CoinbaseClient:
                     self.fatal("insufficient precision")
                 self.log("bitcoin size precision checked")
                 self.restClient.getProducts(self.onProducts, self.onRestClientError)
-                return
+                return None
         self.fatal("could not retrieve currency details for BTC")
 
     def onProducts(self, data):
@@ -208,11 +348,17 @@ class CoinbaseClient:
                     self.fatal("quote increment check failed for {0} (found {1}, expecting {2})".format(self.product, qtInc, self.qtInc))
                 self.log("quote increment checked for {0}".format(self.product))
                 self.restClient.getTicker(self.product, self.onTicker, self.onRestClientError)
-                return
+                return None
         self.fatal("could not find product '{0}'".format(self.product))
 
     def onBookInitialSnapshot(self, data):
-        self.log('onBookInitialSnapshot - processing[{0}]'.format(data))
+        self.log('received full book snapshot from exchange')
+        bookDic = json.loads(data)
+        self.log('book snapshot at sequence number {0} ({1} bids, {2} asks)'.format(
+            bookDic.get('sequence', None), 
+            len(bookDic.get('bids', None)), 
+            len(bookDic.get('asks', None))
+        ))
         self.clientState = ClientState.INITIALIZING_BOOK
         self.log('onBookInitialSnapshot - switched to INITIALIZING_BOOK state')
 
@@ -225,6 +371,9 @@ class CoinbaseClient:
         self.log('getBookInitialSnapshot - switched to WAITING_FOR_BOOK_SNAPSHOT state')
 
     def onTicker(self, data):
+        """
+        Called upon reception of the initial 'ticker' data, triggers WebSocket market data subscription
+        """
         self.log('onTicker, data[{0}'.format(data))
         ticker = json.loads(data)
         self.log('received ticker from exchange {0}'.format(data))
@@ -243,6 +392,9 @@ class CoinbaseClient:
         self.fatal('onRestClientError[{0}]'.format(x))
 
     def onCommand(self, cmdData):
+        """
+        Callback delivering commands received over TCP
+        """
         command = cmdData.get('command', None)
         self.log('received command {0}'.format(command))
         if ServiceCommand.EXIT == command:
