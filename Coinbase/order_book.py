@@ -32,6 +32,17 @@ class Quote:
     def __str__(self):
         return 'Quote[{0}: {1} x {2} - {3}]'.format(self.side, self.price, self.size, self.orderId)
 
+class BookPriceLevelAggregate:
+    """
+    Representing the aggregate of all quotes at a given price level.
+    """
+    def __init__(self, price, quantity, nbQuotes):
+        self.price    = price
+        self.quantity = quantity
+        self.nbQuotes = nbQuotes
+
+    def __str__(self):
+        return 'BookPriceLevelAggregate[ {0} x {1} : {2} quote(s) ]'.format(self.price, self.quantity, self.nbQuotes )
 
 class BookPriceLevel:
     """
@@ -44,7 +55,7 @@ class BookPriceLevel:
         self.quotes   = dict()
 
     def __str__(self):
-        return 'TopOfBook[ {0} x {1} : {2} quotes ]'.format(self.price, self.quantity, len(self.quotes))
+        return 'BookPriceLevel[ {0} x {1} : {2} quotes ]'.format(self.price, self.quantity, len(self.quotes))
 
     def empty(self):
         return len(self.quotes) == 0
@@ -110,7 +121,7 @@ class OrderBookSide:
         index = (price - self.priceLB) // self.priceInc
         # FIXME: remove safety check?
         if price != self.priceLB + index * self.priceInc:
-            print 'Expected {0} ({1}, {2}, {3})'.format(self.priceLB + index * self.priceInc, self.priceLB, index, self.priceInc)
+            print('Expected {0} ({1}, {2}, {3})'.format(self.priceLB + index * self.priceInc, self.priceLB, index, self.priceInc))
             raise InvalidPrice(price)
         return int(index)
 
@@ -204,11 +215,23 @@ class OrderBookSide:
             self.addQuote(quote)
 
 class OrderBookBuilder:
-    def __init__(self, priceInc, basePrice, maxMove):
+    def __init__(self, priceInc, basePrice, maxMove, snapshot = dict()):
         self.orderBookSides = {
             MarketSide.BID: OrderBookSide(MarketSide.BID, priceInc, basePrice - maxMove, basePrice + maxMove),
             MarketSide.ASK: OrderBookSide(MarketSide.ASK, priceInc, basePrice - maxMove, basePrice + maxMove),
         }
+        self.initFromSnapshot(snapshot)
+
+    def initFromSnapshot(self, snapshot):
+        self.orderBookSides[MarketSide.BID].initFromSnapshot(snapshot.get(MarketSide.BID, []))
+        self.orderBookSides[MarketSide.ASK].initFromSnapshot(snapshot.get(MarketSide.ASK, []))
+
+    def addQuote(self, quote):
+        return self.orderBookSides[quote.side].addQuote(quote)
+
+    def removeQuote(self, quote):
+        return self.orderBookSides[quote.side].removeQuote(quote)
+
 
 def test1():
     bidBook = OrderBookSide(MarketSide.BID, Decimal("0.01"), Decimal("99"), Decimal("101"))
@@ -229,21 +252,21 @@ def test1():
         Quote(MarketSide.BID, Decimal("100.03"), Decimal("5"), "014"),
         Quote(MarketSide.BID, Decimal("100.00"), Decimal("9"), "015"),
     ])
-    print bidBook.topOfBook()
-    print bidBook.removeQuote(Quote(MarketSide.BID, Decimal("20.00"), Decimal("1"), "001"))
-    print bidBook.topOfBook()
-    print bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.06"), Decimal("8"), "010"))
-    print bidBook.topOfBook()
-    print bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.06"), Decimal("2"), "007"))
-    print bidBook.topOfBook()
-    print bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.04"), Decimal("3"), "008"))
-    print bidBook.topOfBook()
-    print bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.05"), Decimal("3"), "013"))
-    print bidBook.topOfBook()
-    print bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.05"), Decimal("7"), "003"))
-    print bidBook.topOfBook()
+    print( bidBook.topOfBook() )
+    print( bidBook.removeQuote(Quote(MarketSide.BID, Decimal("20.00"), Decimal("1"), "001")) )
+    print( bidBook.topOfBook() )
+    print( bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.06"), Decimal("8"), "010")) )
+    print( bidBook.topOfBook() )
+    print( bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.06"), Decimal("2"), "007")) )
+    print( bidBook.topOfBook() )
+    print( bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.04"), Decimal("3"), "008")) )
+    print( bidBook.topOfBook() )
+    print( bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.05"), Decimal("3"), "013")) )
+    print( bidBook.topOfBook() )
+    print( bidBook.removeQuote(Quote(MarketSide.BID, Decimal("100.05"), Decimal("7"), "003")) )
+    print( bidBook.topOfBook() )
 
 if '__main__' == __name__:
     decimal.getcontext().prec = 10
-    print 'Testing order_book'
+    print( 'Testing order_book' )
     test1()
