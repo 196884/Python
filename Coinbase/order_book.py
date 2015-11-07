@@ -18,6 +18,13 @@ class QuoteNotFound(Exception):
     def __str__(self):
         return 'QuoteNotFound[{0}]'.format(self.orderId)
 
+class InconsistentQuoteSize(Exception):
+    def __init__(self, quote):
+        self.quote = quote
+
+    def __str__(self):
+        return 'InconsistentQuoteSize[{0}]'.format(self.quote)
+
 class Quote:
     """
     Representing a single quote
@@ -55,7 +62,7 @@ class BookPriceLevel:
         self.quotes   = dict()
 
     def __str__(self):
-        return 'BookPriceLevel[ {0} x {1} : {2} quotes ]'.format(self.price, self.quantity, len(self.quotes))
+        return 'BookPriceLevel[ {0} x {1} : {2} quotes {3} ]'.format(self.price, self.quantity, len(self.quotes), self.quotes.keys())
 
     def empty(self):
         return len(self.quotes) == 0
@@ -70,11 +77,19 @@ class BookPriceLevel:
         """
         Returns True iff the level is now empty
         """
-        quote = self.quotes.pop(quote.orderId, None)
-        if quote is None:
+        bookQuote = self.quotes.pop(quote.orderId, None)
+        if bookQuote is None:
             raise QuoteNotFound(quote)
+        if quote.size != bookQuote.size:
+            raise InconsistentQuoteSize(quote)
         self.quantity -= quote.size
         return len(self.quotes) == 0
+
+    def applyFill(self, orderId, filledQty):
+        self.quotes[orderId].size -= filledQty
+        self.quantity             -= filledQty
+        # Note that it's possible to end up with a quantity of zero,
+        # which should be followed by a 'removeQuote'
 
 class InvalidPrice(Exception):
     def __init__(self, price):
@@ -108,8 +123,6 @@ class OrderBookSide:
             self.levels.append(None)
             priceCurr  += self.priceInc
         self.maxIdx     = len(self.levels) - 1
-        self.tobIdx     = 0 # so that 'topOfBook' initially works
-        self.oobQuotes  = dict() # to store 'out of book' quotes
         self.initFromSnapshot(snapshot)
 
     def topOfBook(self):
@@ -157,13 +170,13 @@ class OrderBookSide:
         else:
             priceLevel.addQuote(quote)
             if MarketSide.BID == self.side:
-                if priceLevel.index > self.tobIdx:
+                if priceLevel.index >=self.tobIdx:
                     self.tobIdx = priceLevel.index
                     return True
                 else:
                     return False
             else:
-                if priceLevel.index < self.tobIdx:
+                if priceLevel.index <=self.tobIdx:
                     self.tobIdx = priceLevel.index
                     return True
                 else:
@@ -189,11 +202,12 @@ class OrderBookSide:
         """
         priceLevel = self.getPriceLevel(quote.price, False)
         if priceLevel is None:
-            self.oobQuotes.pop(quote.orderId)
+            if self.oobQuotes.pop(quote.orderId, None) is None:
+                raise QuoteNotFound(quote)
             return False
         else:
+            index = priceLevel.index
             if priceLevel.removeQuote(quote):
-                index = priceLevel.index
                 self.levels[index] = None
                 if index == self.tobIdx:
                     self._updateTob(index)
@@ -201,12 +215,19 @@ class OrderBookSide:
                 else:
                     return False
             else:
-                return False
+                return index == self.tobIdx
+
+    def applyFill(self, orderId, quantityFilled):
+        priceLevel = self.levels[self.tobIdx]
+        priceLevel.applyFill(orderId, quantityFilled)
 
     def clear(self):
         nbLevels       = len(self.levels)
         self.levels    = [ None for i in range(nbLevels) ]
-        self.tobIdx    = 0
+        if MarketSide.BID == self.side:
+            self.tobIdx = 0
+        else:
+            self.tobIdx = self.maxIdx
         self.oobQuotes = dict()
 
     def initFromSnapshot(self, snapshot):
@@ -223,8 +244,11 @@ class OrderBookBuilder:
         self.initFromSnapshot(snapshot)
 
     def initFromSnapshot(self, snapshot):
-        self.orderBookSides[MarketSide.BID].initFromSnapshot(snapshot.get(MarketSide.BID, []))
-        self.orderBookSides[MarketSide.ASK].initFromSnapshot(snapshot.get(MarketSide.ASK, []))
+        bids = snapshot.get(MarketSide.BID, [])
+        asks = snapshot.get(MarketSide.ASK, [])
+        print 'OrderBookBuilder - initFromSnapshot ({0} bids, {1} asks)'.format(len(bids), len(asks))
+        self.orderBookSides[MarketSide.BID].initFromSnapshot(bids)
+        self.orderBookSides[MarketSide.ASK].initFromSnapshot(asks)
 
     def addQuote(self, quote):
         return self.orderBookSides[quote.side].addQuote(quote)
@@ -232,6 +256,11 @@ class OrderBookBuilder:
     def removeQuote(self, quote):
         return self.orderBookSides[quote.side].removeQuote(quote)
 
+    def applyFill(self, side, orderId, quantityFilled):
+        self.orderBookSides[side].applyFill(orderId, quantityFilled)
+
+    def topOfBook(self, side):
+        return self.orderBookSides[side].topOfBook()
 
 def test1():
     bidBook = OrderBookSide(MarketSide.BID, Decimal("0.01"), Decimal("99"), Decimal("101"))

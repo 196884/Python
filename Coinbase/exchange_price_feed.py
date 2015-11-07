@@ -24,6 +24,9 @@ class IMarketDataFeedHandlerCB:
     def onFeedError(self, error):
         pass
 
+    def onFeedMsgReceived(self, msg):
+        pass
+
     def onFeedMsgOpen(self, quote):
         pass
 
@@ -76,7 +79,7 @@ class CoinbaseMarketDataFeedHandler:
         self.cb.onFeedError(details)
 
     def onReceived(self, msg):
-        pass
+        self.cb.onFeedMsgReceived(msg)
 
     def onOpen(self, msg):
         qtSide = msg['side']
@@ -175,6 +178,7 @@ class CoinbaseMarketDataFeedHandler:
                 log.msg('CoinbaseMarketDataFeedHandler - active')
                 self.cb.onFeedActive(msg.get('sequence', None))
                 self.active = True
+            log.msg('buffer size: {0}'.format(len(self.bufferedMessages)))
             return
         # FIXME: remove logging
         log.msg('buffer size: {0}'.format(len(self.bufferedMessages)))
@@ -192,7 +196,7 @@ class CoinbaseWebSocketClient(WebSocketClientProtocol):
         self.sendMessage(msgJson)
 
     def onMessage(self, msg, binary):
-        self.log('onMessage - message[{0}]'.format(msg))
+        #self.log('onMessage - message[{0}]'.format(msg))
         msgDic = json.loads(msg)
         self.factory.feedHandler.onMessage(msgDic)
        
