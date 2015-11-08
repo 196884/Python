@@ -68,12 +68,44 @@ class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
         else:
             raise UnknownOrderType(msg)
 
+    def logQuoteCsv(self, time, side):
+        obs  = self.orderBookBuilder.bookSide(side)
+        tob  = obs.topOfBook()
+        self.log('QUOTE_CSV, {0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}'.format(
+            time,
+            side,
+            tob.price,
+            len(tob.quotes),
+            tob.quantity,
+            obs.quantity(1),
+            obs.quantity(2),
+            obs.quantity(3),
+            obs.quantity(4),
+            obs.quantity(5)
+        ))
+
+    def logTradeCsv(self, match, side):
+        takerOrderId = match['taker_order_id']
+        if takerOrderId == self.lastMarketOrderId:
+            isMarket = 1
+        else:
+            isMarket = 0
+        self.log('TRADE_CSV, {0}, {1}, {2}, {3}, {4}, {5}'.format(
+            match['time'],
+            side,
+            isMarket,
+            match['price'],
+            match['size'],
+            takerOrderId
+        ))
+
     def onFeedMsgOpen(self, quote):
         self.log('onFeedMsgOpen       - {0}'.format(quote))
         if self.takerOrders.pop(quote.orderId, None) is not None:
             self.log('onFeedMsgOpen - {0} outstanding taker orders ({1})'.format(len(self.takerOrders), self.takerOrders.keys()))
         if self.orderBookBuilder.addQuote(quote):
             self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
+            self.logQuoteCsv(quote.rawData['time'], quote.side)
         #self.orderBookBuilder.addQuote(quote)
 
     def onFeedMsgDoneLimit(self, quote):
@@ -85,6 +117,7 @@ class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
         if taker is None:
             if self.orderBookBuilder.removeQuote(quote):
                 self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
+                self.logQuoteCsv(quote.rawData['time'], quote.side)
         else:
            self.log('onFeedMsgDoneLimit - {0} oustanding taker orders ({1})'.format(len(self.takerOrders), self.takerOrders.keys()))
 
@@ -100,12 +133,14 @@ class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
         else:
             side = MarketSide.BID
         self.log('MATCH - {0}'.format(match))
+        self.logTradeCsv(match, side)
         self.orderBookBuilder.applyFill(side, match['maker_order_id'], Decimal(match['size']))
         # If quantity went to zero, then the book is in a temp state (we're going to receive a done message that will
         # remove the price level), so we suppress logging of the temp TOB
         tobSize = self.orderBookBuilder.topOfBook(side).quantity
         if tobSize > 0:
             self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
+            self.logQuoteCsv(match['time'], side)
         self.log('onFeedMsgMatch - {0} outstanding taker orders ({1})'.format(len(self.takerOrders), self.takerOrders.keys()))
 
     def onFeedMsgChange(self, change):

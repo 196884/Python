@@ -157,6 +157,17 @@ class OrderBookSide:
             self.levels[index] = result
         return result
 
+    def quantity(self, ticksFromTob = 0):
+        if self.side == MarketSide.BID:
+            di = -1
+        else:
+            di =  1
+        level = self.levels[self.tobIdx + ticksFromTob * di ]
+        if level is None:
+            return Decimal(0)
+        else:
+            return level.quantity
+
     def addQuote(self, quote):
         """
         Returns True iff the tob has moved
@@ -265,6 +276,9 @@ class OrderBookBuilder:
 
     def topOfBook(self, side):
         return self.orderBookSides[side].topOfBook()
+
+    def bookSide(self, side):
+        return self.orderBookSides[side]
 
 def test1():
     bidBook = OrderBookSide(MarketSide.BID, Decimal("0.01"), Decimal("99"), Decimal("101"))
