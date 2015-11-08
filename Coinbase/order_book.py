@@ -19,11 +19,12 @@ class QuoteNotFound(Exception):
         return 'QuoteNotFound[{0}]'.format(self.orderId)
 
 class InconsistentQuoteSize(Exception):
-    def __init__(self, quote):
-        self.quote = quote
+    def __init__(self, received, inBook):
+        self.received = received
+        self.inBook   = inBook
 
     def __str__(self):
-        return 'InconsistentQuoteSize[{0}]'.format(self.quote)
+        return 'InconsistentQuoteSize: received[{0}] vs in book[{1}]'.format(self.received, self.inBook)
 
 class Quote:
     """
@@ -62,6 +63,7 @@ class BookPriceLevel:
         self.quotes   = dict()
 
     def __str__(self):
+        #return 'BookPriceLevel[ {0} x {1} : {2} quotes ]'.format(self.price, self.quantity, len(self.quotes))
         return 'BookPriceLevel[ {0} x {1} : {2} quotes {3} ]'.format(self.price, self.quantity, len(self.quotes), self.quotes.keys())
 
     def empty(self):
@@ -80,10 +82,12 @@ class BookPriceLevel:
         bookQuote = self.quotes.pop(quote.orderId, None)
         if bookQuote is None:
             raise QuoteNotFound(quote)
-        if quote.size != bookQuote.size:
-            raise InconsistentQuoteSize(quote)
-        self.quantity -= quote.size
-        return len(self.quotes) == 0
+        if 0 == len(self.quotes):
+            self.quantity = Decimal(0)
+            return True
+        else:
+            self.quantity = sum([ q.size for q in self.quotes.values() ])
+            return False
 
     def applyFill(self, orderId, filledQty):
         self.quotes[orderId].size -= filledQty

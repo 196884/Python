@@ -21,18 +21,19 @@ class UnknownOrderType(Exception):
 class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
     def __init__(self, config):
         self.log('initializing')
-        self.config           = config
-        self.product          = config.get('coinbase', 'product')
-        prec                  = config.getint('coinbase', 'decimalPrec')
+        self.config            = config
+        self.product           = config.get('coinbase', 'product')
+        prec                   = config.getint('coinbase', 'decimalPrec')
         self.log('setting decimal precision to {0}'.format(prec))
         decimal.getcontext().prec = prec
-        self.maxMove          = Decimal(config.get('coinbase', 'maxMove'))
-        self.reqRespAPI       = CoinbaseRequestResponseAPI(config)
-        self.priceFeed        = CoinbasePriceFeed(config)
-        self.mdFeedHandler    = self.priceFeed.createFeedHandler(self)
+        self.maxMove           = Decimal(config.get('coinbase', 'maxMove'))
+        self.reqRespAPI        = CoinbaseRequestResponseAPI(config)
+        self.priceFeed         = CoinbasePriceFeed(config)
+        self.mdFeedHandler     = self.priceFeed.createFeedHandler(self)
         self.mdFeedHandler.startBuffering()
-        self.orderBookBuilder = None
-        self.takerOrders      = dict()
+        self.orderBookBuilder  = None
+        self.takerOrders       = dict()
+        self.lastMarketOrderId = ''
 
     def startPriceFeed(self):
         """
@@ -50,7 +51,6 @@ class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
         self.log('onFeedActive - sequence[{0}]'.format(seqNum))
         self.log('requesting full order book snapshot for {0}'.format(self.product))
         self.reqRespAPI.getOrderBook(self.product, 3, self.onBookSnapshot, self.onRequestError)
-        #self.mdFeedHandler.startProcessing(seqNum)
 
     def onFeedDataloss(self):
         self.log('onFeedDataloss')
@@ -62,6 +62,7 @@ class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
         orderType = msg['order_type']
         if   orderType == 'market':
             self.log('onFeedMsgReceived - MARKET ORDER [{0}]'.format(msg))
+            self.lastMarketOrderId = msg['order_id']
         elif orderType == 'limit':
             return
         else:
@@ -69,33 +70,43 @@ class CoinbaseMDAlgo(IMarketDataFeedHandlerCB):
 
     def onFeedMsgOpen(self, quote):
         self.log('onFeedMsgOpen       - {0}'.format(quote))
+        if self.takerOrders.pop(quote.orderId, None) is not None:
+            self.log('onFeedMsgOpen - {0} outstanding taker orders ({1})'.format(len(self.takerOrders), self.takerOrders.keys()))
         if self.orderBookBuilder.addQuote(quote):
             self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
         #self.orderBookBuilder.addQuote(quote)
 
     def onFeedMsgDoneLimit(self, quote):
         self.log('onFeedMsgDoneLimit  - {0}'.format(quote))
-        taker = self.takerOrders.pop(quote.orderId, None)
+        if quote.orderId != self.lastMarketOrderId:
+            taker = self.takerOrders.pop(quote.orderId, None)
+        else:
+            taker = None
         if taker is None:
             if self.orderBookBuilder.removeQuote(quote):
                 self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
         else:
-           self.log('onFeedMsgDoneLimit - {0} oustanding taker orders'.format(len(self.takerOrders)))
+           self.log('onFeedMsgDoneLimit - {0} oustanding taker orders ({1})'.format(len(self.takerOrders), self.takerOrders.keys()))
 
     def onFeedMsgDoneMarket(self, msg):
         self.log('onFeedMsgDoneMarket - {0}'.format(msg))
 
     def onFeedMsgMatch(self, match):
         takerOrderId = match['taker_order_id']
-        self.takerOrders[takerOrderId] = match
+        if takerOrderId != self.lastMarketOrderId:
+            self.takerOrders[takerOrderId] = match
         if match['side'] == 'sell':
             side = MarketSide.ASK
         else:
             side = MarketSide.BID
         self.log('MATCH - {0}'.format(match))
         self.orderBookBuilder.applyFill(side, match['maker_order_id'], Decimal(match['size']))
-        self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
-        self.log('onFeedMsgMatch - {0} outstanding taker orders'.format(len(self.takerOrders)))
+        # If quantity went to zero, then the book is in a temp state (we're going to receive a done message that will
+        # remove the price level), so we suppress logging of the temp TOB
+        tobSize = self.orderBookBuilder.topOfBook(side).quantity
+        if tobSize > 0:
+            self.log('new TOB: {0} vs {1}'.format(self.orderBookBuilder.topOfBook(MarketSide.BID), self.orderBookBuilder.topOfBook(MarketSide.ASK)))
+        self.log('onFeedMsgMatch - {0} outstanding taker orders ({1})'.format(len(self.takerOrders), self.takerOrders.keys()))
 
     def onFeedMsgChange(self, change):
         self.log('onFeedMsgChange - {0}'.format(change))

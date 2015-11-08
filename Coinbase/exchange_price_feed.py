@@ -150,6 +150,7 @@ class CoinbaseMarketDataFeedHandler:
         """
         self.expSeqNum = fromSeqNum + 1
         self.state     = FeedHandlerState.PROCESSING
+        log.msg('CoinbaseMarketDataFeedHandler - active, about to process {0} buffered messages'.format(len(self.bufferedMessages)))
         for msg in self.bufferedMessages:
             seqNum = msg['sequence']
             if seqNum > fromSeqNum:
@@ -160,6 +161,7 @@ class CoinbaseMarketDataFeedHandler:
                     self.expSeqNum += 1
                     self.processMessage(msg)
         self.bufferedMessages = []
+        log.msg('CoinbaseMarketDataFeedHandler - active, processing')
         # FIXME: we can add a hook into cb here, if needed...
 
     def onMessage(self, msg):
@@ -175,13 +177,10 @@ class CoinbaseMarketDataFeedHandler:
         elif FeedHandlerState.BUFFERING == self.state:
             self.bufferedMessages.append(msg)
             if not self.active:
-                log.msg('CoinbaseMarketDataFeedHandler - active')
+                log.msg('CoinbaseMarketDataFeedHandler - active, buffering')
                 self.cb.onFeedActive(msg.get('sequence', None))
                 self.active = True
-            log.msg('buffer size: {0}'.format(len(self.bufferedMessages)))
             return
-        # FIXME: remove logging
-        log.msg('buffer size: {0}'.format(len(self.bufferedMessages)))
         
 
 class CoinbaseWebSocketClient(WebSocketClientProtocol):
@@ -196,7 +195,7 @@ class CoinbaseWebSocketClient(WebSocketClientProtocol):
         self.sendMessage(msgJson)
 
     def onMessage(self, msg, binary):
-        #self.log('onMessage - message[{0}]'.format(msg))
+        self.log('onMessage - message[{0}]'.format(msg))
         msgDic = json.loads(msg)
         self.factory.feedHandler.onMessage(msgDic)
        
