@@ -24,7 +24,7 @@ def plot(bidFile, askFile, trdFile):
     plt.show()
 
 if __name__ == "__main__":
-    bidFile = "bid2.csv"
-    askFile = "ask2.csv"
-    trdFile = "trades2.csv"
+    bidFile = "bids.csv"
+    askFile = "asks.csv"
+    trdFile = "trades.csv"
     plot(bidFile, askFile, trdFile)
